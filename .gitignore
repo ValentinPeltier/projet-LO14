@@ -1,0 +1,7 @@
+# Test folders
+a/
+b/
+
+# Misc
+*.local
+*.swp
