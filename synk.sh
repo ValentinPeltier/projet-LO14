@@ -65,21 +65,6 @@ function getLastSynkFile {
     return 0
 }
 
-# Get the absolute path from an absolute path or a relative path P
-# syntax : getAbsolutePath P
-function getAbsolutePath {
-    if [ $# -ne 1 ]; then
-        return 1
-    fi
-    
-    if [ ${1:0:1} = "/" ]; then
-        echo $1
-    else
-        echo $(pwd)/$1
-    fi
-    return 0
-}
-
 # Display a message M to stderr (optional) and exit
 # syntax : fatalError [M]
 function fatalError {
@@ -110,7 +95,7 @@ case $# in
         
         # synk S --> set the synk file path with the path given by the user
         if [ $# -eq 1 ]; then
-            SYNK_FILE=$(getAbsolutePath $1)
+            SYNK_FILE=$(realpath $1)
         fi
 
         # Check if the synk file exists
@@ -148,7 +133,7 @@ case $# in
 
         # If the user has given a path for the synk file, then we use it, else we use the default path
         if [ $# -eq 4 ]; then
-            SYNK_FILE=$(getAbsolutePath $4)
+            SYNK_FILE=$(realpath $4)
         else
             SYNK_FILE=$DEFAULT_SYNK_FILE
         fi
@@ -158,12 +143,9 @@ case $# in
             fatalError "Error: the second directory must not exist or must be empty"
         fi
 
-        # If the second directory does not exist, then we create it
-        mkdir $3 2>/dev/null
-
         # Get the absolute paths from the given paths
-        A=$(getAbsolutePath $2)
-        B=$(getAbsolutePath $3)
+        A=$(realpath $2)
+        B=$(realpath $3)
         
         # Initiate a synchronisation between directories A and B by creating a synk file at the specified path
         init $A $B $SYNK_FILE
