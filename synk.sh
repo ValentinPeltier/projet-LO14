@@ -5,15 +5,44 @@ LAST_SYNK=$WORKING_DIRECTORY/last
 DEFAULT_SYNK_FILE=$WORKING_DIRECTORY/default-1.synk
 
 # Create a synchronisation file between directories A and B at a specified path S
+# B should be empty
 # syntax : init A B S
 function init {
-    echo "init($1, $2, $3)"
+    echo -e "Creating a synchronisation file..."
+   
+    # Check if the synk file already exist
+    if [ -e $3 ]; then
+        fatalError "Error: $3 already exists"
+    fi
+
+    # Write A and B paths in S
+    echo -e "$1\n$2" > $3
+
+    # Append files stats
+    echo -E "$(getStats $1 $1)" | tee -a $3 > /dev/null
+
+    echo "Success: the synchronisation file has been created at $3"
 }
 
 # Synchronize directories A and B based on a synchronisation file S
 # syntax : synk A B S
 function synk {
     echo "synk($1, $2, $3)"
+}
+
+# Return files stats recursively in D
+# The file names are relative to R
+# syntax : getStats D R
+function getStats {
+    for file in $(ls -A $1); do
+        if [ -d $1/$file ]; then
+            echo $(getStats $1/$file $2)
+        else
+            echo "$(realpath --relative-to=$2 $1/$file)//$(stat -c '%A//%s//%y' $1/$file)"
+        fi
+    done
+
+    return 0
 }
 
 # Store a synk file S in the last-synk file
@@ -55,7 +84,7 @@ function getAbsolutePath {
 # syntax : fatalError [M]
 function fatalError {
     if [ $# -ge 1 ]; then
-        >&2 echo $1
+        echo $1 >&2
     fi
 
     exit 1
@@ -84,14 +113,19 @@ case $# in
             SYNK_FILE=$(getAbsolutePath $1)
         fi
 
-        # check if the synk file exists
+        # Check if the synk file exists
         if [ ! -e $SYNK_FILE ]; then
             fatalError "Error: the synchronisation file does not exist at the specified path ($SYNK_FILE)"
         fi    
         
-        # check if we can write to the synk file
+        # Check if we can write to the synk file
         if [ ! -w $SYNK_FILE ]; then
             fatalError "Error: cannot write to $SYNK_FILE: permission denied"
+        fi
+
+        # Check if the synk file is a regular file
+        if [ ! -f $SYNK_FILE ]; then
+            fatalError "Error: you must specify a valid synchronisation file"
         fi
 
         # Get A and B paths from the synk file
@@ -107,22 +141,30 @@ case $# in
 
     # Initialize
     3 | 4 )
-        # check that the first argument is "init"
+        # Check that the first argument is "init"
         if [ $1 != "init" ]; then
             fatalError "Error: unknown command \"$1\""
         fi
 
-        # if the user has given a path for the synk file, then we use it, else we use the default path
+        # If the user has given a path for the synk file, then we use it, else we use the default path
         if [ $# -eq 4 ]; then
             SYNK_FILE=$(getAbsolutePath $4)
         else
             SYNK_FILE=$DEFAULT_SYNK_FILE
         fi
 
+        # Check if B exist and is not a directory, or if B is a directory that is not empty, then there is an error
+        if ([ -e $3 ] && [ ! -d $3 ]) || ([ -d $3 ] && [ $(ls -A $3 | wc -w) -gt 0 ]); then
+            fatalError "Error: the second directory must not exist or must be empty"
+        fi
+
+        # If the second directory does not exist, then we create it
+        mkdir $3 2>/dev/null
+
         # Get the absolute paths from the given paths
         A=$(getAbsolutePath $2)
         B=$(getAbsolutePath $3)
-
+        
         # Initiate a synchronisation between directories A and B by creating a synk file at the specified path
         init $A $B $SYNK_FILE
         
@@ -133,3 +175,5 @@ case $# in
     * ) fatalError "Error: invalid arguments number"
         ;;
 esac
+
+exit 0
