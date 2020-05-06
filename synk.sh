@@ -8,7 +8,7 @@ DEFAULT_SYNK_FILE=$WORKING_DIRECTORY/default-1.synk
 # B should be empty
 # syntax : init A B S
 function init {
-    echo -e "Creating a synchronisation file..."
+    echo "Creating a synchronisation file..."
    
     # Check if the synk file already exist
     if [ -e $3 ]; then
@@ -27,7 +27,22 @@ function init {
 # Synchronize directories A and B based on a synchronisation file S
 # syntax : synk A B S
 function synk {
-    echo "synk($1, $2, $3)"
+    # Get all files in A and B directories with a depth of 1
+    files=$(echo -e "$(ls -A $1)\n$(ls -A $2)" | sort -u)
+
+    for file in $files; do
+        if [ -d $1/$file ] && [ -d $2/$file ]; then
+            # A and B are directories
+            echo $(synk $1/$file $2/$file $3)
+        elif ([ -d $1/$file ] && [ ! -d $2/$file ]) || ([ ! -d $1/$file ] && [ -d $2/$file ]); then
+            # Conflict : one is a directory but not the other one
+            if [ -d $1/$file ]; then
+                echo "Conflict: $1/$file is a directory but not $2/$file"
+            else
+                echo "Conflict: $2/$file is a directory but not $1/$file"
+            fi
+        fi
+    done
 }
 
 # Return files stats recursively in D
