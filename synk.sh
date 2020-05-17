@@ -27,21 +27,173 @@ function init {
 # Synchronize directories A and B based on a synchronisation file S
 # syntax : synk A B S
 function synk {
+
     # Get all files in A and B directories with a depth of 1
     files=$(echo -e "$(ls -A $1)\n$(ls -A $2)" | sort -u)
 
+    # Processing with each file :
     for file in $files; do
-        if [ -d $1/$file ] && [ -d $2/$file ]; then
-            # A and B are directories
+
+        # Check if both are directories
+        if [ -d $1/$file ] && [ -d $2/$file ]; then 
             echo $(synk $1/$file $2/$file $3)
+
+        # Check if one is a directory and one is a file
         elif ([ -d $1/$file ] && [ ! -d $2/$file ]) || ([ ! -d $1/$file ] && [ -d $2/$file ]); then
-            # Conflict : one is a directory but not the other one
+            
             if [ -d $1/$file ]; then
-                echo "Conflict: $1/$file is a directory but not $2/$file"
+                echo "Conflict: $1/$file is a directory $2/$file is not"
             else
-                echo "Conflict: $2/$file is a directory but not $1/$file"
+                echo "Conflict: $2/$file is a directory $1/$file is not"
             fi
+            flag=0
+            while [ $flag = 0 ]; do
+
+                echo "1) See whats is the difference"
+                echo "2) Keep $1/$file and delete $2/$file"
+                echo "3) Keep $2/$file and delete $1/$file"
+                echo "4) Cancel synchronization"
+                read choice
+
+                case "$choice" in
+                    1)
+                    cat $1/$file
+                    cat $2/$file
+                    ;;
+                    2)
+                    rm $2/$file
+                    if [ -f $1/$file ]; then
+                        sed 's/^$file/$(realpath --relative-to=$2 $1/$file)//$(stat -c '%A//%s//%y' $1/$file)/'
+                    fi
+                    flag=1
+                    ;;
+                    3)
+                    rm $1/$file
+                    if [ -f $2/$file ]; then
+                        sed 's/^$file/$(realpath --relative-to=$2 $1/$file)//$(stat -c '%A//%s//%y' $1/$file)/'
+                    fi
+                    flag=1
+                    ;;
+                    4)
+                    exit;;
+                    *)
+                    echo "That is not an option"
+                    sleep 3
+                    ;;
+                esac
+            done
+
+        
+        else # Otherwise both are files
+
+            # Check if metada are different
+            if [ $(ls -l $1/$file) -ne $(ls -l $2/$file)]; then
+                
+                #Check if the first file is new or is the most recently modified
+                if [ ( $(date -r $1/$file +%s) -ne $(date -r $3/$file +%s) && $(date -r $2/$file +%s) -eq $(date -r $(echo $3 | grep $file | awk '{FS="//" ; print $4} ') +%s) ) || ! ( -f $2/$file && $3 || grep $file -c -gt 1)];       
+                    cat $1/$file > $2/$file;
+                    # Check if .synk need to be modified or created
+                    if [ $3 | grep $file -c -gt 1 ]; then
+                        sed 's/^$file/$(realpath --relative-to=$2 $1/$file)//$(stat -c '%A//%s//%y' $1/$file)/'
+                    elif
+                        $(realpath --relative-to=$2 $1/$file)//$(stat -c '%A//%s//%y' $1/$file) >> $3;
+                    fi
+
+                elif [ ( $(date -r $2/$file +%s) -ne $(date -r $3/$file +%s) && $(date -r $1/$file +%s) -eq $(date -r $(echo $3 | grep $file | awk '{FS="//" ; print $4} ') +%s) || ! ( -f $1/$file && $3 || grep $file -c -gt 1)];
+                    cat $2/$file > $1/$file;
+
+                    if [ $3 | grep $file -c -gt 1 ]; then
+                        sed 's/^$file/$(realpath --relative-to=$2 $1/$file)//$(stat -c '%A//%s//%y' $1/$file)/'
+                    elif
+                        $(realpath --relative-to=$2 $1/$file)//$(stat -c '%A//%s//%y' $1/$file) >> $3;
+                    fi
+
+                # Check if files need to be removed
+                elif [! -f $1/$file && -f $3]; then
+                    rm $2/$file;
+                    rm $3 | grep $file;
+                
+                elif [! -f $1/$file && -f $3]; then
+                    rm $1/$file;
+                    rm $3 | grep $file;
+                
+                # Check if contents are similar
+                elif [ cat $1/$file -eq cat $2/$file ]; then
+                    echo "Error : file content are similar but metadata are not. Please choose one option"
+                    flag=0
+                    while [ $flag = 0 ]; do
+
+                        echo "1) See what metada are"
+                        echo "2) Keep  $1/$file and overwrite $2/$file"
+                        echo "3) Keep $2/$file and overwrite $1/$file"
+                        echo "4) Cancel synchronization"
+                        read choice
+
+                        case "$choice" in
+                            1)
+                            ls -l $2/$file
+                            ls -l $1/$file
+                            ;;
+                            2)
+                            cat $1/$file > $2/$file
+                            sed 's/^$file/$(realpath --relative-to=$2 $1/$file)//$(stat -c '%A//%s//%y' $1/$file)/'
+                            flag=1
+                            ;;
+                            3)
+                            cat $2/$file > $1/$file
+                            sed 's/^$file/$(realpath --relative-to=$2 $1/$file)//$(stat -c '%A//%s//%y' $2/$file)/'
+                            flag=1
+                            ;;
+                            4)
+                            exit;;
+                            *)
+                            echo "That is not an option"
+                            sleep 3
+                            ;;
+                        esac
+                    done
+                    
+                else
+                    echo "Conflict : files are different, please choose one option" 
+                    flag=0
+                    while [ $flag = 0 ]; do
+                    
+                        echo "1) See what is the difference"
+                        echo "2) Keep $1/$file and overwrite $2/$file"
+                        echo "3) Keep $2/$file and overwrite $1/$file"
+                        echo "4) Cancel synchronization"
+                        read choice
+
+                        case "$choice" in
+                            1)
+                            echo $1/$file
+                            echo $2/$file
+                            ;;
+                            2)
+                            cat $1/$file > $2/$file
+                            sed 's/^$file/$(realpath --relative-to=$2 $1/$file)//$(stat -c '%A//%s//%y' $1/$file)/'
+                            flag=1
+                            ;;
+                            3)
+                            cat $2/$file $1/$file
+                            sed 's/^$file/$(realpath --relative-to=$2 $1/$file)//$(stat -c '%A//%s//%y' $2/$file)/'
+                            flag=1
+                            ;;
+                            4)
+                            exit;;
+                            *)
+                            echo "That is not an option"
+                            sleep 3
+                            ;;
+                        esac
+                    done
+                fi
+
+            else
+                echo "Files are similar : no need to synchronize"
+            fi 
         fi
+
     done
 }
 
