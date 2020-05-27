@@ -18,8 +18,8 @@ function init {
     # Write A and B paths in S
     echo -e "$1\n$2" > $3
 
-    # Append files stats
-    echo -E "$(getStats $1 $1)" | tee -a $3 > /dev/null
+    # Append files metadata
+    echo -E "$(getRecursiveMetadata $1 $1)" | tee -a $3 > /dev/null
 
     echo "Success: the synchronisation file has been created at $3"
 }
@@ -31,7 +31,7 @@ function synk {
     # Get all files in A and B directories with a depth of 1
     files=$(echo -e "$(ls -A $1)\n$(ls -A $2)" | sort -u)
 
-    # Processing with each file :
+    # Processing with each file
     for file in $files; do
 
         # Check if both are directories
@@ -39,150 +39,157 @@ function synk {
             echo $(synk $1/$file $2/$file $3)
 
         # Check if one is a directory and one is a file
-        elif [ ( -d $1/$file && ! -d $2/$file ) || ( ! -d $1/$file && -d $2/$file ) ]; then
+        elif ([ -d $1/$file ] && [ ! -d $2/$file ]) || ([ ! -d $1/$file ] && [ -d $2/$file ]); then
             
+            # Display conflict message
             if [ -d $1/$file ]; then
-                echo "Conflict: $1/$file is a directory $2/$file is not"
+                echo "Conflict: $1/$file is a directory whereas $2/$file is not"
             else
-                echo "Conflict: $2/$file is a directory $1/$file is not"
+                echo "Conflict: $2/$file is a directory whereas $1/$file is not"
             fi
-            resolved=0
-            while [ $resolved -eq 0 ]; do
 
-                echo "1) Keep $1/$file and delete $2/$file"
-                echo "2) Keep $2/$file and delete $1/$file"
+            # Loop until the user resolve the conflict
+            while : ; do
+                keep=""
+
+                echo "1) Keep $1/$file and overwrite $2/$file"
+                echo "2) Keep $2/$file and overwrite $1/$file"
                 echo "3) Ignore these files"
-                read choice
+                echo -n "> "
+                read
 
-                case "$choice" in
-                    1)
-                    rm $2/$file
-                    if [ -f $1/$file ]; then
-                        sed 's/^$file/$(realpath --relative-to=$2 $1/$file)//$(stat -c '%A//%s//%y' $1/$file)/'
-                    fi
-                    resolved=1
-                    ;;
-                    2)
-                    rm $1/$file
-                    if [ -f $2/$file ]; then
-                        sed 's/^$file/$(realpath --relative-to=$2 $1/$file)//$(stat -c '%A//%s//%y' $1/$file)/'
-                    fi
-                    resolved=1
-                    ;;
-                    3)
-                    resolved=1
-                    ;;
-                    *)
-                    echo "That is not an option"
-                    ;;
+                case $REPLY in
+                    1)  keep=$1 ;;
+                    2)  keep=$2 ;;
+                    3)  break ;;
+                    *)  echo -e "That is not an option\n" ;;
                 esac
+
+                # If option 1 or 2
+                if [ $keep ]; then
+                    if [ $keep = $1 ]; then
+                        overwrite=$2
+                    else
+                        overwrite=$1
+                    fi
+
+                    rm -r $overwrite/$file
+                    cp -r $keep/$file $overwrite
+                    
+                    # if [ -f $2/$file ]; then
+                    #     sed 's/^$file/$(realpath --relative-to=$2 $1/$file)//$(stat -c '%A//%s//%y' $1/$file)/'
+                    # fi
+
+                    break
+                fi
             done
         
         # Otherwise both are files
-        # Check if metada are different
-        elif [ $(ls -l $1/$file) -ne $(ls -l $2/$file) ]; then
-            
-            #Check if the first file is new or is the most recently modified
-            synkdate=$(date -r $(echo $3 | grep $file | awk '{FS="//" ; print $4} ') +%s)
-
-            if [ ( $(date -r $1/$file +%s) -ne $(date -r $3/$file +%s) && $(date -r $2/$file +%s) -eq $synkdate ) || ! ( -f $2/$file && $($3 | grep $file -c) -gt 1)];       
-                cp -f $1/$file $2/$file;
-                # Check if .synk need to be modified or created
-                if [ $($3 | grep $file -c) -gt 1 ]; then
-                    sed 's/^$file/$(realpath --relative-to=$2 $1/$file)//$(stat -c '%A//%s//%y' $1/$file)/'
-                elif
-                    $(realpath --relative-to=$2 $1/$file)//$(stat -c '%A//%s//%y' $1/$file) >> $3;
-                fi
-            
-            elif [ ( $(date -r $2/$file +%s) -ne $(date -r $3/$file +%s) && $(date -r $1/$file +%s) -eq $(date -r $(echo $3 | grep $file | awk '{FS="//" ; print $4} ') +%s) || ! ( -f $1/$file && $($3 | grep $file -c) -gt 1)];
-                cp -f $2/$file $1/$file;
-
-                if [ $3 | grep $file -c -gt 1 ]; then
-                    sed 's/^$file/$(realpath --relative-to=$2 $1/$file)//$(stat -c '%A//%s//%y' $1/$file)/'
-                elif
-                    $(realpath --relative-to=$2 $1/$file)//$(stat -c '%A//%s//%y' $1/$file) >> $3;
-                fi
-
-            # Check if files need to be removed
-            elif [! -f $1/$file && -f $3 ]; then
-                rm $2/$file
-                rm $3 | grep $file
-            
-            elif [! -f $1/$file && -f $3 ]; then
-                rm $1/$file
-                rm $3 | grep $file
-            
-            # Check if contents are similar
-            else
-                similar=0
-                resolved=0
-
-                if [ $(cat $1/$file) -eq $(cat $2/$file) ]; then
-                    echo "Error : file content are similar but metadata are not. Please choose one option"
-                    similar=1
-                else
-                    echo "Error : files are different, please choose one option" 
-                fi
-
-                while [ $resolved -eq 0 ]; do
-                
-                    if [ $similar -eq 1] ; then
-                        echo "1) See what metada are"
-                    else
-                        echo "1) See what is the difference"
-                    fi
-                    echo "2) Keep $1/$file and overwrite $2/$file"
-                    echo "3) Keep $2/$file and overwrite $1/$file"
-                    echo "4) Ignore these files"
-                    read choice
-
-                    case "$choice" in
-                        1)
-                        if [ $similar -eq 1 ]; then
-                            ls -l $1/$file
-                            ls -l $2/$file
-                        else
-                            diff $1/$file $2/$file
-                        fi
-                        ;;
-                        2)
-                        cp -f $1/$file $2/$file
-                        sed 's/^$file/$(realpath --relative-to=$2 $1/$file)//$(stat -c '%A//%s//%y' $1/$file)/'
-                        resolved=1
-                        ;;
-                        3)
-                        cp -f $2/$file $1/$file
-                        sed 's/^$file/$(realpath --relative-to=$2 $1/$file)//$(stat -c '%A//%s//%y' $2/$file)/'
-                        resolved=1
-                        ;;
-                        4)
-                        resolved=1
-                        ;;
-                        *)
-                        echo "That is not an option" 
-                        ;;
-                    esac
-                done
-
-            fi
-
+        # Check if metadata are different
+#        elif [ $(getStat $1/$file $1) -ne $(getStat $2/$file $2) ]; then
+#            
+#            # Check if the first file is new or is the most recently modified
+#            synkdate=$(date -r $(echo $3 | grep $file | awk '{FS="//" ; print $4} ') '+%s')
+#
+#            if [ $(date -r $1/$file '+%s') -ne $(date -r $3/$file '+%s') ] && $(date -r $2/$file '+%s') -eq $synkdate ) || ! ( -f $2/$file && $($3 | grep $file -c) -gt 1)];       
+#                cp -f $1/$file $2/$file;
+#                # Check if .synk need to be modified or created
+#                if [ $($3 | grep $file -c) -gt 1 ]; then
+#                    sed "s/^$file/$(realpath --relative-to=$2 $1/$file)//$(stat -c '%A//%s//%y' $1/$file)/"
+#                elif
+#                    $(realpath --relative-to=$2 $1/$file)//$(stat -c '%A//%s//%y' $1/$file) >> $3;
+#                fi
+#            
+#            elif [ ( $(date -r $2/$file +%s) -ne $(date -r $3/$file +%s) && $(date -r $1/$file +%s) -eq $(date -r $(echo $3 | grep $file | awk '{FS="//" ; print $4} ') +%s) || ! ( -f $1/$file && $($3 | grep $file -c) -gt 1)];
+#                cp -f $2/$file $1/$file;
+#
+#                if [ $3 | grep $file -c -gt 1 ]; then
+#                    sed "s/^$file/$(realpath --relative-to=$2 $1/$file)//$(stat -c '%A//%s//%y' $1/$file)/"
+#                elif
+#                    $(realpath --relative-to=$2 $1/$file)//$(stat -c '%A//%s//%y' $1/$file) >> $3;
+#                fi
+#
+#            # Check if files need to be removed
+#            elif [! -f $1/$file && -f $3 ]; then
+#                rm $2/$file
+#                rm $3 | grep $file
+#            
+#            elif [! -f $1/$file && -f $3 ]; then
+#                rm $1/$file
+#                rm $3 | grep $file
+#            
+#            # Check if contents are similar
+#            else
+#                similar=0
+#                resolved=0
+#
+#                if [ $(cat $1/$file) -eq $(cat $2/$file) ]; then
+#                    echo "Error : file content are similar but metadata are not. Please choose one option"
+#                    similar=1
+#                else
+#                    echo "Error : files are different, please choose one option" 
+#                fi
+#
+#                while [ $resolved -eq 0 ]; do
+#                
+#                    if [ $similar -eq 1] ; then
+#                        echo "1) See what metada are"
+#                    else
+#                        echo "1) See what is the difference"
+#                    fi
+#                    echo "2) Keep $1/$file and overwrite $2/$file"
+#                    echo "3) Keep $2/$file and overwrite $1/$file"
+#                    echo "4) Ignore these files"
+#                    read choice
+#
+#                    case "$choice" in
+#                        1)  if [ $similar -eq 1 ]; then
+#                                ls -l $1/$file
+#                                ls -l $2/$file
+#                            else
+#                                diff $1/$file $2/$file
+#                            fi
+#                            ;;
+#                        2)  cp -f $1/$file $2/$file
+#                            sed "s/^$file/$(realpath --relative-to=$2 $1/$file)//$(stat -c '%A//%s//%y' $1/$file)/"
+#                            resolved=1
+#                            ;;
+#                        3)  cp -f $2/$file $1/$file
+#                            sed "s/^$file/$(realpath --relative-to=$2 $1/$file)//$(stat -c '%A//%s//%y' $2/$file)/"
+#                            resolved=1
+#                            ;;
+#                        4)  resolved=1
+#                            ;;
+#                        *)  echo "That is not an option" 
+#                            ;;
+#                    esac
+#                done
+#
+#            fi
+#
         else
-            echo "Files are similar : no need to synchronize"
+            echo "Synchronized $1/$file and $2/$file"
         fi 
-        
 
     done
 }
 
+# Return stats for file F
+# The file name is relative to R
+# syntax : getFileMetadata F R
+function getFileMetadata {
+    echo "$(realpath --relative-to=$2 $1)//$(stat -c '%A//%s//%Z' $1)"
+}
+
 # Return files stats recursively in D
 # The file names are relative to R
-# syntax : getStats D R
-function getStats {
+# syntax : getRecursiveMetadata D R
+function getRecursiveMetadata {
     for file in $(ls -A $1); do
         if [ -d $1/$file ]; then
-            echo $(getStats $1/$file $2)
+            echo $(getRecursiveMetadata $1/$file $2)
         else
-            echo "$(realpath --relative-to=$2 $1/$file)//$(stat -c '%A//%s//%y' $1/$file)"
+            echo $(getFileMetadata $1/$file $2)
         fi
     done
 
@@ -287,6 +294,9 @@ case $# in
             fatalError "Error: the second directory must not exist or must be empty"
         fi
 
+        # Create B directory if needed
+        mkdir -p $3
+        
         # Get the absolute paths from the given paths
         A=$(realpath $2)
         B=$(realpath $3)
