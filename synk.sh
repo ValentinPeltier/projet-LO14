@@ -38,8 +38,13 @@ function synk {
     # Processing with each file
     for filename in $filenames; do
 
-        # We retrieve the relative path used by synk files
+        # We retrieve the relative path
         file=$(realpath --relative-to=$A $1/$filename 2>/dev/null) || $(realpath --relative-to=$B $2/$filename)
+
+        # Get retrieve the last synk/modified dates
+        lastSynkDate=$(grep "^$file//" $SYNKFILE | awk -F '//' '{print $4}')
+        modifiedDateA=$(stat -c '%Y' $A/$file 2>/dev/null)
+        modifiedDateB=$(stat -c '%Y' $B/$file 2>/dev/null)
 
         # Example values :
         # $A = /path/to/dir/a
@@ -108,7 +113,7 @@ function synk {
             # We delete it in B
             rm -f $B/$file
             # We remove it in the synk file
-            sed -i "~^$file//~d" $SYNKFILE
+            sed -i "\~^$file//~d" $SYNKFILE
 
         # If file B does not exist but is in the synk file (then the file has been deleted)
         elif [ ! -e $B/$file ] && $(isInSynkFile $file); then
@@ -116,37 +121,33 @@ function synk {
             # We delete it in A
             rm -f $A/$file
             # We remove it in the synk file
-            sed -i "~^$file//~d" $SYNKFILE
+            sed -i "\~^$file//~d" $SYNKFILE
 
-        # If metadata are different
-        elif [ "$(getFileMetadata $A/$file $file)" != "$(getFileMetadata $B/$file $file)" ]; then
+        # If metadata are identical
+        elif [ "$(getFileMetadata $A/$file $file)" = "$(getFileMetadata $B/$file $file)" ]; then
 
-            # Get the last synk date for this file
-            lastSynkDate=$(grep "^$file//" $SYNKFILE | awk -F '//' '{print $4}')
-            modifiedDateA=$(stat -c '%Y' $A/$file 2>/dev/null)
-            modifiedDateB=$(stat -c '%Y' $B/$file 2>/dev/null)
+            continue
 
-            # If file A has been modified or created
-            if ([ -f $A/$file ] && [ "$modifiedDateA" != "$lastSynkDate" ] && [ "$modifiedDateB" = "$lastSynkDate" ]) || ([ ! -e $B/$file ] && ! $(isInSynkFile $file)); then
+        # If file A has been modified or created
+        elif ([ -f $A/$file ] && [ "$modifiedDateA" != "$lastSynkDate" ] && [ "$modifiedDateB" = "$lastSynkDate" ]) || ([ ! -e $B/$file ] && ! $(isInSynkFile $file)); then
 
-                # Overwrite old file with the new file
-                mkdir -p $2 2>/dev/null
-                cp -f --preserve=all $A/$file $B/$file
-                
-                # Update synk file with the new metadata
-                updateSynkFile $A/$file $file
+            # Overwrite old file with the new file
+            mkdir -p $2 2>/dev/null
+            cp -f --preserve=all $A/$file $B/$file
+            
+            # Update synk file with the new metadata
+            updateSynkFile $A/$file $file
 
-            # If file B has been modified or created
-            elif ([ -f $B/$file ] && [ "$modifiedDateB" != "$lastSynkDate" ] && [ "$modifiedDateA" = "$lastSynkDate" ]) || ([ ! -e $B/$file ] && ! $(isInSynkFile $file)); then
-                
-                # Overwrite old file with the new file
-                mkdir -p $1 2>/dev/null
-                cp -f --preserve=all $B/$file $A/$file
-                
-                # Update synk file with the new metadata
-                updateSynkFile $B/$file $file
+        # If file B has been modified or created
+        elif ([ -f $B/$file ] && [ "$modifiedDateB" != "$lastSynkDate" ] && [ "$modifiedDateA" = "$lastSynkDate" ]) || ([ ! -e $B/$file ] && ! $(isInSynkFile $file)); then
+            
+            # Overwrite old file with the new file
+            mkdir -p $1 2>/dev/null
+            cp -f --preserve=all $B/$file $A/$file
+            
+            # Update synk file with the new metadata
+            updateSynkFile $B/$file $file
 
-            fi
         fi
     done
 }
