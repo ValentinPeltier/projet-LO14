@@ -1,219 +1,201 @@
 #!/bin/bash
 
 WORKING_DIRECTORY=~/.synk
-LAST_SYNK=$WORKING_DIRECTORY/last
-DEFAULT_SYNK_FILE=$WORKING_DIRECTORY/default-1.synk
+LAST_SYNKFILE=$WORKING_DIRECTORY/last
+DEFAULT_SYNKFILE=$WORKING_DIRECTORY/default-1.synk
 
-# Create a synchronisation file between directories A and B at a specified path S
-# B should be empty
-# syntax : init A B S
+# Create a synchronisation file between directories $A and $B at path $SYNKFILE
+# $B should be empty
+# syntax : init
 function init {
     echo "Creating a synchronisation file..."
-   
+
     # Check if the synk file already exist
-    if [ -e $3 ]; then
-        fatalError "Error: $3 already exists"
+    if [ -e $SYNKFILE ]; then
+        fatalError "Error: $SYNKFILE already exists"
     fi
 
+    # Synchronize the directories
+    cp -r --preserve=all $A/* $B 2>/dev/null
+
     # Write A and B paths in S
-    echo -e "$1\n$2" > $3
+    echo -e "$A\n$B" > $SYNKFILE
 
     # Append files metadata
-    echo -E "$(getRecursiveMetadata $1 $1)" | tee -a $3 > /dev/null
+    echo -E "$(getRecursiveMetadata $A $A)" | tee -a $SYNKFILE >/dev/null
 
-    echo "Success: the synchronisation file has been created at $3"
+    echo "Success: the synchronisation file has been created at $SYNKFILE"
 }
 
-# Synchronize directories A and B based on a synchronisation file S
-# syntax : synk A B S
+# Synchronize directories D1 and D2 based on synchronisation file $SYNKFILE
+# using the base paths $A and $B
+# syntax : synk D1 D2
 function synk {
 
-    # Get all files in A and B directories with a depth of 1
-    files=$(echo -e "$(ls -A $1)\n$(ls -A $2)" | sort -u)
+    # Get all files in D1 and D2 directories with a depth of 1
+    filenames=$(echo -e "$(ls -A $1 2>/dev/null)\n$(ls -A $2 2>/dev/null)" | sort -u)
 
     # Processing with each file
-    for file in $files; do
+    for filename in $filenames; do
 
-        # Check if both are directories
-        if [ -d $1/$file ] && [ -d $2/$file ]; then 
-            echo $(synk $1/$file $2/$file $3)
+        # We retrieve the relative path used by synk files
+        file=$(realpath --relative-to=$A $1/$filename 2>/dev/null) || $(realpath --relative-to=$B $2/$filename)
 
-        # Check if one is a directory and one is a file
-        elif ([ -d $1/$file ] && [ ! -d $2/$file ]) || ([ ! -d $1/$file ] && [ -d $2/$file ]); then
-            
+        # Example values :
+        # $A = /path/to/dir/a
+        # $B = /path/to/dir/b
+        # $1 = /path/to/dir/a/path/to/target
+        # $2 = /path/to/dir/b/path/to/target
+        # $file = path/to/target/file.txt
+        # $filename = file.txt
+        #
+        # $file is what we call "relative path"
+        # $A/$file or $B/$file is what we call "absolute path"
+
+        # If one is a directory and one is a file
+        if ([ -d $A/$file ] && [ -f $B/$file ]) || ([ -f $A/$file ] && [ -d $B/$file ]); then
+
             # Display conflict message
-            if [ -d $1/$file ]; then
-                echo "Conflict: $1/$file is a directory whereas $2/$file is not"
+            if [ -d $A/$file ]; then
+                echo "Conflict: $file is a directory in $A but not in $B"
             else
-                echo "Conflict: $2/$file is a directory whereas $1/$file is not"
+                echo "Conflict: $file is a directory in $B but not in $A"
             fi
 
             # Loop until the user resolve the conflict
-            while : ; do
-                keep=""
-
-                echo "1) Keep $1/$file and overwrite $2/$file"
-                echo "2) Keep $2/$file and overwrite $1/$file"
+            while :; do
+                echo "1) Keep $A/$file and overwrite $B/$file"
+                echo "2) Keep $B/$file and overwrite $A/$file"
                 echo "3) Ignore these files"
                 echo -n "> "
-                read
+                read choice
 
-                case $REPLY in
-                    1)  keep=$1 ;;
-                    2)  keep=$2 ;;
-                    3)  break ;;
-                    *)  echo -e "That is not an option\n" ;;
-                esac
+                case $choice in
+                1)
+                    # Overwrite the selected file or directory
+                    rm -rf $B/$file
+                    cp -r --preserve=all $A/$file $2
 
-                # If option 1 or 2
-                if [ $keep ]; then
-                    if [ $keep = $1 ]; then
-                        overwrite=$2
-                    else
-                        overwrite=$1
-                    fi
-
-                    rm -r $overwrite/$file
-                    cp -r $keep/$file $overwrite
-                    
-                    # if [ -f $2/$file ]; then
-                    #     sed 's/^$file/$(realpath --relative-to=$2 $1/$file)//$(stat -c '%A//%s//%y' $1/$file)/'
-                    # fi
+                    # Update the synk file with the new metadata
+                    updateSynkFile $A/$file $file
 
                     break
-                fi
-            done
-        
-        # Otherwise both are files
-        # Check if metadata are different
-#        elif [ $(getStat $1/$file $1) -ne $(getStat $2/$file $2) ]; then
-#            
-#            # Check if the first file is new or is the most recently modified
-#            synkdate=$(date -r $(echo $3 | grep $file | awk '{FS="//" ; print $4} ') '+%s')
-#
-#            if [ $(date -r $1/$file '+%s') -ne $(date -r $3/$file '+%s') ] && $(date -r $2/$file '+%s') -eq $synkdate ) || ! ( -f $2/$file && $($3 | grep $file -c) -gt 1)];       
-#                cp -f $1/$file $2/$file;
-#                # Check if .synk need to be modified or created
-#                if [ $($3 | grep $file -c) -gt 1 ]; then
-#                    sed "s/^$file/$(realpath --relative-to=$2 $1/$file)//$(stat -c '%A//%s//%y' $1/$file)/"
-#                elif
-#                    $(realpath --relative-to=$2 $1/$file)//$(stat -c '%A//%s//%y' $1/$file) >> $3;
-#                fi
-#            
-#            elif [ ( $(date -r $2/$file +%s) -ne $(date -r $3/$file +%s) && $(date -r $1/$file +%s) -eq $(date -r $(echo $3 | grep $file | awk '{FS="//" ; print $4} ') +%s) || ! ( -f $1/$file && $($3 | grep $file -c) -gt 1)];
-#                cp -f $2/$file $1/$file;
-#
-#                if [ $3 | grep $file -c -gt 1 ]; then
-#                    sed "s/^$file/$(realpath --relative-to=$2 $1/$file)//$(stat -c '%A//%s//%y' $1/$file)/"
-#                elif
-#                    $(realpath --relative-to=$2 $1/$file)//$(stat -c '%A//%s//%y' $1/$file) >> $3;
-#                fi
-#
-#            # Check if files need to be removed
-#            elif [! -f $1/$file && -f $3 ]; then
-#                rm $2/$file
-#                rm $3 | grep $file
-#            
-#            elif [! -f $1/$file && -f $3 ]; then
-#                rm $1/$file
-#                rm $3 | grep $file
-#            
-#            # Check if contents are similar
-#            else
-#                similar=0
-#                resolved=0
-#
-#                if [ $(cat $1/$file) -eq $(cat $2/$file) ]; then
-#                    echo "Error : file content are similar but metadata are not. Please choose one option"
-#                    similar=1
-#                else
-#                    echo "Error : files are different, please choose one option" 
-#                fi
-#
-#                while [ $resolved -eq 0 ]; do
-#                
-#                    if [ $similar -eq 1] ; then
-#                        echo "1) See what metada are"
-#                    else
-#                        echo "1) See what is the difference"
-#                    fi
-#                    echo "2) Keep $1/$file and overwrite $2/$file"
-#                    echo "3) Keep $2/$file and overwrite $1/$file"
-#                    echo "4) Ignore these files"
-#                    read choice
-#
-#                    case "$choice" in
-#                        1)  if [ $similar -eq 1 ]; then
-#                                ls -l $1/$file
-#                                ls -l $2/$file
-#                            else
-#                                diff $1/$file $2/$file
-#                            fi
-#                            ;;
-#                        2)  cp -f $1/$file $2/$file
-#                            sed "s/^$file/$(realpath --relative-to=$2 $1/$file)//$(stat -c '%A//%s//%y' $1/$file)/"
-#                            resolved=1
-#                            ;;
-#                        3)  cp -f $2/$file $1/$file
-#                            sed "s/^$file/$(realpath --relative-to=$2 $1/$file)//$(stat -c '%A//%s//%y' $2/$file)/"
-#                            resolved=1
-#                            ;;
-#                        4)  resolved=1
-#                            ;;
-#                        *)  echo "That is not an option" 
-#                            ;;
-#                    esac
-#                done
-#
-#            fi
-#
-        else
-            echo "Synchronized $1/$file and $2/$file"
-        fi 
+                    ;;
+                2)
+                    # Overwrite the selected file or directory
+                    rm -rf $A/$file
+                    cp -r --preserve=all $B/$file $1
 
+                    # Update the synk file with the new metadata
+                    updateSynkFile $B/$file $file
+
+                    break
+                    ;;
+                3) break ;;
+                *) echo -e "Invalid option\n" ;;
+                esac
+            done
+
+        # If at least one is a directory
+        elif [ -d $A/$file ] || [ -d $B/$file ]; then
+
+            # Use recursivity 
+            synk $A/$file $B/$file
+
+        # If file A does not exist but is in the synk file (then the file has been deleted)
+        elif [ ! -e $A/$file ] && $(isInSynkFile $file); then
+
+            # We delete it in B
+            rm -f $B/$file
+            # We remove it in the synk file
+            sed -i "~^$file//~d" $SYNKFILE
+
+        # If file B does not exist but is in the synk file (then the file has been deleted)
+        elif [ ! -e $B/$file ] && $(isInSynkFile $file); then
+
+            # We delete it in A
+            rm -f $A/$file
+            # We remove it in the synk file
+            sed -i "~^$file//~d" $SYNKFILE
+
+        # If metadata are different
+        elif [ "$(getFileMetadata $A/$file $file)" != "$(getFileMetadata $B/$file $file)" ]; then
+
+            # Get the last synk date for this file
+            lastSynkDate=$(grep "^$file//" $SYNKFILE | awk -F '//' '{print $4}')
+            modifiedDateA=$(stat -c '%Y' $A/$file 2>/dev/null)
+            modifiedDateB=$(stat -c '%Y' $B/$file 2>/dev/null)
+
+            # If file A has been modified or created
+            if ([ -f $A/$file ] && [ "$modifiedDateA" != "$lastSynkDate" ] && [ "$modifiedDateB" = "$lastSynkDate" ]) || ([ ! -e $B/$file ] && ! $(isInSynkFile $file)); then
+
+                # Overwrite old file with the new file
+                mkdir -p $2 2>/dev/null
+                cp -f --preserve=all $A/$file $B/$file
+                
+                # Update synk file with the new metadata
+                updateSynkFile $A/$file $file
+
+            # If file B has been modified or created
+            elif ([ -f $B/$file ] && [ "$modifiedDateB" != "$lastSynkDate" ] && [ "$modifiedDateA" = "$lastSynkDate" ]) || ([ ! -e $B/$file ] && ! $(isInSynkFile $file)); then
+                
+                # Overwrite old file with the new file
+                mkdir -p $1 2>/dev/null
+                cp -f --preserve=all $B/$file $A/$file
+                
+                # Update synk file with the new metadata
+                updateSynkFile $B/$file $file
+
+            fi
+        fi
     done
 }
 
-# Return stats for file F
-# The file name is relative to R
-# syntax : getFileMetadata F R
+# Return the metadata of the file with absolute path A and relative path R
+# syntax : getFileMetadata A R
 function getFileMetadata {
-    echo "$(realpath --relative-to=$2 $1)//$(stat -c '%A//%s//%Z' $1)"
+    if [ -f $1 ]; then
+        echo "$2//$(stat -c '%A//%s//%Y' $1)"
+        return 0
+    fi
+
+    return 1
 }
 
-# Return files stats recursively in D
-# The file names are relative to R
+# Return metadata of all files in directory D, relatively to a directory R
 # syntax : getRecursiveMetadata D R
 function getRecursiveMetadata {
-    for file in $(ls -A $1); do
-        if [ -d $1/$file ]; then
-            echo $(getRecursiveMetadata $1/$file $2)
+    for filename in $(ls -A $1); do
+        if [ -d $1/$filename ]; then
+            echo "$(getRecursiveMetadata $1/$filename $2)"
         else
-            echo $(getFileMetadata $1/$file $2)
+            echo "$(getFileMetadata $1/$filename $(realpath --relative-to=$2 $1/$filename))"
         fi
     done
 
     return 0
 }
 
-# Store a synk file S in the last-synk file
-# syntax : updateLastSynkFile S
-function setLastSynkFile {
-    if [ $# -eq 1 ]; then
-        echo $1 > $LAST_SYNK
-    fi
-    return 1
+# Indicate if the file with relative path R is in the synchronization file $SYNKFILE
+# syntax: isInSynkFile R
+function isInSynkFile {
+    [ $(grep "^$1//" $SYNKFILE -c) -gt 0 ] && echo true || echo false
+    return 0
 }
 
-# Return the last-synk file path
-# syntax : getLastSynkFile
-function getLastSynkFile {
-    if [ ! -r $LAST_SYNK ]; then
-        return 1
+# Update the metadata in the synchronization file $SYNKFILE
+# for the file with absolute path A and relative path R
+# syntax: updateSynkFile A R
+function updateSynkFile {
+    # If file is in the synk file
+    if $(isInSynkFile $2); then
+        # We update its metadata in the synk file
+        # We use tildes as delimiters beacause slashs don't work since it is used in the filenames
+        sed -i "s~^$2//.*~$(getFileMetadata $1 $2)~g" $SYNKFILE
+    else
+        # We add it to the synk file
+        getFileMetadata $1 $2 >> $SYNKFILE
     fi
-
-    cat $LAST_SYNK
-    return 0
 }
 
 # Display a message M to stderr (optional) and exit
@@ -230,86 +212,114 @@ function fatalError {
 #####################################################
 #####################################################
 
+# Get options
+VERBOSE=
+
+OPTS=$(getopt -o vh -l verbose,help -- "$@")
+if [ "$?" != 0 ]; then
+    exit 1
+fi
+eval set -- "$OPTS"
+
+while true; do
+    case "$1" in
+    -h | --help)
+        echo "usage: synk [OPTION]... [init DIRECTORY_A DIRECTORY_B] [SYNK_PATH]"
+        exit 0
+        ;;
+    -v | --verbose)
+        VERBOSE=true
+        shift
+        ;;
+    --) break ;;
+    esac
+done
+# Skip the -- option
+shift
+
 # Create working directory
 mkdir -p $WORKING_DIRECTORY
 
 # Retrieve the last-synk file
-SYNK_FILE=$(getLastSynkFile)
+SYNKFILE=$(cat $LAST_SYNKFILE 2>/dev/null)
 
 case $# in
-    # Synchronize
-    0 | 1)
-        # synk --> check if a synchronisation has been initiated
-        if [ $# -eq 0 ] && [ ! $SYNK_FILE ]; then
-           fatalError "Error: please initiate a synchronisation first" 
-        fi
-        
-        # synk S --> set the synk file path with the path given by the user
-        if [ $# -eq 1 ]; then
-            SYNK_FILE=$(realpath $1)
-        fi
+# Synchronize
+0 | 1)
+    # synk --> check if a synchronisation has been initiated
+    if [ $# -eq 0 ] && [ ! $SYNKFILE ]; then
+        fatalError "Error: please initiate a synchronisation first or check $LAST_SYNKFILE"
+    fi
 
-        # Check if the synk file exists
-        if [ ! -e $SYNK_FILE ]; then
-            fatalError "Error: the synchronisation file does not exist at the specified path ($SYNK_FILE)"
-        fi    
-        
-        # Check if we can write to the synk file
-        if [ ! -w $SYNK_FILE ]; then
-            fatalError "Error: cannot write to $SYNK_FILE: permission denied"
-        fi
+    # synk S --> set the synk file path with the path given by the user
+    if [ $# -eq 1 ]; then
+        SYNKFILE=$(realpath $1)
+    fi
 
-        # Check if the synk file is a regular file
-        if [ ! -f $SYNK_FILE ]; then
-            fatalError "Error: you must specify a valid synchronisation file"
-        fi
+    # Check if the synk file exists
+    if [ ! -e $SYNKFILE ]; then
+        fatalError "Error: the synchronisation file does not exist at the specified path ($SYNKFILE)"
+    fi
 
-        # Get A and B paths from the synk file
-        A=$(head -n 1 $SYNK_FILE)
-        B=$(head -n 2 $SYNK_FILE | tail -n 1)
+    # Check if we can write to the synk file
+    if [ ! -w $SYNKFILE ]; then
+        fatalError "Error: cannot write to $SYNKFILE: permission denied"
+    fi
 
-        # Synchronise directories A and B with the specified synk file
-        synk $A $B $SYNK_FILE
+    # Check if the synk file is a regular file
+    if [ ! -f $SYNKFILE ]; then
+        fatalError "Error: you must specify a valid synchronisation file"
+    fi
 
-        # Update the last-synk file so that we can remember the last synk file used
-        setLastSynkFile $SYNK_FILE
-        ;;
+    # Get A and B paths from the synk file
+    A=$(head -n 1 $SYNKFILE)
+    B=$(head -n 2 $SYNKFILE | tail -n 1)
 
-    # Initialize
-    3 | 4 )
-        # Check that the first argument is "init"
-        if [ $1 != "init" ]; then
-            fatalError "Error: unknown command \"$1\""
-        fi
+    # Synchronise directories A and B with the specified synk file
+    synk $A $B
 
-        # If the user has given a path for the synk file, then we use it, else we use the default path
-        if [ $# -eq 4 ]; then
-            SYNK_FILE=$(realpath $4)
-        else
-            SYNK_FILE=$DEFAULT_SYNK_FILE
-        fi
+    echo "Files synchronized successfully"
 
-        # Check if B exist and is not a directory, or if B is a directory that is not empty, then there is an error
-        if ([ -e $3 ] && [ ! -d $3 ]) || ([ -d $3 ] && [ $(ls -A $3 | wc -w) -gt 0 ]); then
-            fatalError "Error: the second directory must not exist or must be empty"
-        fi
+    # Update the last-synk file so that we can remember the last synk file used
+    echo $SYNKFILE > $LAST_SYNKFILE
+    ;;
 
-        # Create B directory if needed
-        mkdir -p $3
-        
-        # Get the absolute paths from the given paths
-        A=$(realpath $2)
-        B=$(realpath $3)
-        
-        # Initiate a synchronisation between directories A and B by creating a synk file at the specified path
-        init $A $B $SYNK_FILE
-        
-        # Update the last-synk file so that we can remember the last synk file used
-        setLastSynkFile $SYNK_FILE
-        ;;
+# Initialize
+3 | 4)
+    # Check that the first argument is "init"
+    if [ $1 != "init" ]; then
+        fatalError "Error: unknown command \"$1\""
+    fi
 
-    * ) fatalError "Error: invalid arguments number"
-        ;;
+    # If the user has given a path for the synk file, then we use it, else we use the default path
+    if [ $# -eq 4 ]; then
+        SYNKFILE=$(realpath $4)
+    else
+        SYNKFILE=$DEFAULT_SYNKFILE
+    fi
+
+    # Check if B exist and is not a directory, or if B is a directory that is not empty, then there is an error
+    if ([ -e $3 ] && [ ! -d $3 ]) || ([ -d $3 ] && [ $(ls -A $3 | wc -w) -gt 0 ]); then
+        fatalError "Error: the second directory must not exist or must be empty"
+    fi
+
+    # Create B directory if needed
+    mkdir -p $3
+
+    # Get the absolute paths from the given paths
+    A=$(realpath $2)
+    B=$(realpath $3)
+
+    # Initiate a synchronisation between directories A and B by creating a synk file S
+    init
+
+    # Update the last-synk file so that we can remember the last synk file used
+    echo $SYNKFILE > $LAST_SYNKFILE
+    ;;
+
+*)
+    fatalError "Error: invalid arguments number"
+    ;;
 esac
 
 exit 0

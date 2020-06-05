@@ -1,7 +1,10 @@
-# Test folders
+# Test directories
 a/
 b/
 
 # Misc
 *.local
 *.swp
+
+# IDE directories
+.vscode/
