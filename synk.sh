@@ -62,44 +62,12 @@ function synk {
 
             # Display conflict message
             if [ -d $A/$file ]; then
-                echo "Conflict: $file is a directory in $A but not in $B"
+                echo "Conflict: $file is a directory in $A but a file in $B"
             else
-                echo "Conflict: $file is a directory in $B but not in $A"
+                echo "Conflict: $file is a directory in $B but a file in $A"
             fi
 
-            # Loop until the user resolve the conflict
-            while :; do
-                echo "1) Keep $A/$file and overwrite $B/$file"
-                echo "2) Keep $B/$file and overwrite $A/$file"
-                echo "3) Ignore these files"
-                echo -n "> "
-                read choice
-
-                case $choice in
-                1)
-                    # Overwrite the selected file or directory
-                    rm -rf $B/$file
-                    cp -r --preserve=all $A/$file $2
-
-                    # Update the synk file with the new metadata
-                    updateSynkFile $A/$file $file
-
-                    break
-                    ;;
-                2)
-                    # Overwrite the selected file or directory
-                    rm -rf $A/$file
-                    cp -r --preserve=all $B/$file $1
-
-                    # Update the synk file with the new metadata
-                    updateSynkFile $B/$file $file
-
-                    break
-                    ;;
-                3) break ;;
-                *) echo -e "Invalid option\n" ;;
-                esac
-            done
+            resolveConflict $file
 
         # If at least one is a directory
         elif [ -d $A/$file ] || [ -d $B/$file ]; then
@@ -126,6 +94,7 @@ function synk {
         # If metadata are identical
         elif [ "$(getFileMetadata $A/$file $file)" = "$(getFileMetadata $B/$file $file)" ]; then
 
+            # Do nothing
             continue
 
         # If file A has been modified or created
@@ -147,6 +116,24 @@ function synk {
             
             # Update synk file with the new metadata
             updateSynkFile $B/$file $file
+
+        # If file contents are identical (then only metadata are different)
+        elif $(cmp -s $A/$file $B/$file); then
+
+            # Display conflict message
+            echo "Conflict: metadata are different for file $file"
+            echo -e "In $A\n\tPermissions: $(stat -c '%A' $A/$file)\n\tLast modified date: $(stat -c '%y' $A/$file)"
+            echo -e "In $B\n\tPermissions: $(stat -c '%A' $B/$file)\n\tLast modified date: $(stat -c '%y' $B/$file)"
+
+            resolveConflict $file
+
+        # Otherwise it is a conflict
+        else
+
+            # Display conflict message
+            echo "Conflict: $file has been modified in both directories"
+
+            resolveConflict $file true
 
         fi
     done
@@ -197,6 +184,56 @@ function updateSynkFile {
         # We add it to the synk file
         getFileMetadata $1 $2 >> $SYNKFILE
     fi
+}
+
+# Ask the user to resolve the conflict for the file with relative path R
+# with possibility to display the difference if D equals "true"
+# syntax: resolveConflict R [D]
+function resolveConflict {
+    # Loop until the user resolve the conflict
+    while :; do
+        echo -e "\t1) Keep $1 in $A"
+        echo -e "\t2) Keep $1 in $B"
+        [ "$2" = true ] && echo -e "\t3) Display difference"
+        echo -e "\t0) Skip"
+        echo -en "\t> "
+        read choice
+
+        case $choice in
+        1)
+            # Overwrite the selected file or directory
+            rm -rf $B/$1
+            cp -r --preserve=all $A/$1 $(dirname $B/$1)
+
+            # Update the synk file with the new metadata
+            updateSynkFile $A/$1 $1
+
+            break
+            ;;
+        2)
+            # Overwrite the selected file or directory
+            rm -rf $A/$1
+            cp -r --preserve=all $B/$1 $(dirname $A/$1)
+
+            # Update the synk file with the new metadata
+            updateSynkFile $B/$1 $1
+
+            break
+            ;;
+        3)
+            if [ "$2" != true ]; then
+                echo -e "Invalid option\n"
+                continue
+            fi
+
+            # Display the difference
+            echo -e "$A/$1\t| $B/$1\n\n$(diff -y $A/$1 $B/$1)" | less
+            ;;
+
+        0) break ;;
+        *) echo -e "Invalid option\n" ;;
+        esac
+    done
 }
 
 # Display a message M to stderr (optional) and exit
