@@ -41,10 +41,15 @@ function synk {
         # We retrieve the relative path
         file=$(realpath --relative-to=$A $1/$filename 2>/dev/null) || $(realpath --relative-to=$B $2/$filename)
 
-        # Get retrieve the last synk/modified dates
-        lastSynkDate=$(grep "^$file//" $SYNKFILE | awk -F '//' '{print $4}')
+        # Retrieve the modified dates
+        modifiedDateSynk=$(grep "^$file//" $SYNKFILE | awk -F '//' '{print $4}')
         modifiedDateA=$(stat -c '%Y' $A/$file 2>/dev/null)
         modifiedDateB=$(stat -c '%Y' $B/$file 2>/dev/null)
+
+        # Retrieve the file permissions
+        permissionSynk=$(grep "^$file//" $SYNKFILE | awk -F '//' '{print $2}')
+        permissionA=$(stat -c '%A' $A/$file 2>/dev/null)
+        permissionB=$(stat -c '%A' $B/$file 2>/dev/null)
 
         # Example values :
         # $A = /path/to/dir/a
@@ -98,7 +103,7 @@ function synk {
             continue
 
         # If file A has been modified or created
-        elif ([ -f $A/$file ] && [ "$modifiedDateA" != "$lastSynkDate" ] && [ "$modifiedDateB" = "$lastSynkDate" ]) || ([ ! -e $B/$file ] && ! $(isInSynkFile $file)); then
+        elif ([ -f $A/$file ] && [ "$modifiedDateA" != "$modifiedDateSynk" ] && [ "$modifiedDateB" = "$modifiedDateSynk" ]) || ([ ! -e $B/$file ] && ! $(isInSynkFile $file)); then
 
             # Overwrite old file with the new file
             mkdir -p $2 2>/dev/null
@@ -108,7 +113,7 @@ function synk {
             updateSynkFile $A/$file $file
 
         # If file B has been modified or created
-        elif ([ -f $B/$file ] && [ "$modifiedDateB" != "$lastSynkDate" ] && [ "$modifiedDateA" = "$lastSynkDate" ]) || ([ ! -e $B/$file ] && ! $(isInSynkFile $file)); then
+        elif ([ -f $B/$file ] && [ "$modifiedDateB" != "$modifiedDateSynk" ] && [ "$modifiedDateA" = "$modifiedDateSynk" ]) || ([ ! -e $B/$file ] && ! $(isInSynkFile $file)); then
             
             # Overwrite old file with the new file
             mkdir -p $1 2>/dev/null
@@ -120,12 +125,28 @@ function synk {
         # If file contents are identical (then only metadata are different)
         elif $(cmp -s $A/$file $B/$file); then
 
-            # Display conflict message
-            echo "Conflict: metadata are different for file $file"
-            echo -e "In $A\n\tPermissions: $(stat -c '%A' $A/$file)\n\tLast modified date: $(stat -c '%y' $A/$file)"
-            echo -e "In $B\n\tPermissions: $(stat -c '%A' $B/$file)\n\tLast modified date: $(stat -c '%y' $B/$file)"
+            # If only file A permission has changed
+            if [ "$permissionA" != "$permissionSynk" ] && [ "$permissionB" = "$permissionSynk"  ]; then
 
-            resolveConflict $file
+                # We copy file A permission to file B
+                chmod --reference="$B/$file" "$A/$file"
+
+            # If only file B permission has changed
+            elif [ "$permissionA" = "$permissionSynk" ] && [ "$permissionB" != "$permissionSynk" ]; then
+                
+                # We copy file B permission to file A
+                chmod --reference="$B/$file" "$A/$file"
+
+            else
+
+                # Display conflict message
+                echo "Conflict: both metadata have been modified for file $file"
+                echo -e "In $A\n\tPermissions: $(stat -c '%A' $A/$file)\n\tLast modified date: $(stat -c '%y' $A/$file)"
+                echo -e "In $B\n\tPermissions: $(stat -c '%A' $B/$file)\n\tLast modified date: $(stat -c '%y' $B/$file)"
+
+                resolveConflict $file
+            
+            fi
 
         # Otherwise it is a conflict
         else
