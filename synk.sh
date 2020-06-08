@@ -8,19 +8,19 @@ DEFAULT_SYNKFILE=$WORKING_DIRECTORY/default-1.synk
 # $B should be empty
 # syntax : init
 function init {
-    echo "Creating a synchronisation file..."
+    echo "Initiating a synchronization session between \"$A\" and \"$B\"..."
 
     # Check if the synk file already exist
     if [ -e $SYNKFILE ]; then
         fatalError "Error: $SYNKFILE already exists"
     fi
 
-    displayVerbose "Copying \"$A\" to \"$B\"..." 92
+    displayVerbose "Copy \"$A\" to \"$B\""
 
-    # Synchronize the directories
+    # Synchronize the directories for the first time
     cp -r --preserve=all $A/* $B 2>/dev/null
 
-    # Write A and B paths in S
+    # Write A and B paths in the synchronization file
     echo -e "$A\n$B" > $SYNKFILE
 
     # Append files metadata
@@ -43,7 +43,7 @@ function synk {
         # Retrieve the relative path
         file=$(realpath --relative-to=$A $1/$filename 2>/dev/null) || $(realpath --relative-to=$B $2/$filename)
 
-        ([ -f $A/$file ] || [ -f $B/$file ]) && displayVerbose "Analyzing \"$file\"" 92
+        ([ -f $A/$file ] || [ -f $B/$file ]) && displayVerbose "Analyze \"$file\"" true
 
         # Retrieve the modified dates
         modifiedDateSynk=$(grep "^$file//" $SYNKFILE | awk -F '//' '{print $4}')
@@ -87,7 +87,7 @@ function synk {
         # If file A does not exist but is in the synk file (then the file has been deleted)
         elif [ ! -e $A/$file ] && $(isInSynkFile $file); then
 
-            displayVerbose "Removing \"$B/$file\""
+            displayVerbose "Remove \"$B/$file\""
 
             # We delete it in B
             rm -f $B/$file
@@ -97,7 +97,7 @@ function synk {
         # If file B does not exist but is in the synk file (then the file has been deleted)
         elif [ ! -e $B/$file ] && $(isInSynkFile $file); then
 
-            displayVerbose "Removing \"$A/$file\""
+            displayVerbose "Remove \"$A/$file\""
 
             # We delete it in A
             rm -f $A/$file
@@ -277,7 +277,7 @@ function resolveConflict {
 # syntax : fatalError [M] [H]
 function fatalError {
     if [ $# -ge 1 ]; then
-        echo -e "$1" >&2
+        echo -e "\e[31m$1\e[0m" >&2
         [ "$2" = "true" ] && echo -e "Try \"$0 --help\" for more information." >&2
     fi
 
@@ -297,12 +297,13 @@ function displayHelp {
     return 0
 }
 
-# Display verbose message M. Color can be specified with parameter C
-# syntax: displayVerbose M [C]
+# Display verbose message M.
+# Indicate if the message should be displayed as a title with T = true
+# syntax: displayVerbose M [T]
 function displayVerbose {
     [ "$VERBOSE" != "true" ] && return 1
 
-    [ "$2" = "" ] && echo -e "\e[94m$1\e[0m" || echo -e "\e[$2m$1\e[0m"
+    [ "$2" = "true" ] && echo -e "\e[92m$1\e[0m" || echo -e "\e[94m$1\e[0m"
     return 0
 }
 
@@ -360,7 +361,7 @@ case $# in
 
     # Check if the synk file exists
     if [ ! -e $SYNKFILE ]; then
-        fatalError "Error: the synchronisation file does not exist at the specified path \"$SYNKFILE\""
+        fatalError "Error: the synchronisation file does not exist at the specified path \"$SYNKFILE\"" true
     fi
 
     # Check if we can write to the synk file
@@ -373,9 +374,21 @@ case $# in
         fatalError "Error: you must specify a valid synchronisation file." true
     fi
 
+    displayVerbose "Using synchronization file \"$SYNKFILE\"" true
+
     # Get A and B paths from the synk file
     A=$(head -n 1 $SYNKFILE)
     B=$(head -n 2 $SYNKFILE | tail -n 1)
+
+    # Check if directory A exist
+    if [ ! -d $A ]; then
+        fatalError "Error: directory \"$A\" does not exist. Unable to synchronize."
+    fi
+
+    # Check if directory B exist
+    if [ ! -d $B ]; then
+        fatalError "Error: directory \"$B\" does not exist. Unable to synchronize."
+    fi
 
     # Synchronise directories A and B with the specified synk file
     synk $A $B
