@@ -15,6 +15,8 @@ function init {
         fatalError "Error: $SYNKFILE already exists"
     fi
 
+    displayVerbose "Copying \"$A\" to \"$B\"..." 92
+
     # Synchronize the directories
     cp -r --preserve=all $A/* $B 2>/dev/null
 
@@ -38,8 +40,10 @@ function synk {
     # Processing with each file
     for filename in $filenames; do
 
-        # We retrieve the relative path
+        # Retrieve the relative path
         file=$(realpath --relative-to=$A $1/$filename 2>/dev/null) || $(realpath --relative-to=$B $2/$filename)
+
+        ([ -f $A/$file ] || [ -f $B/$file ]) && displayVerbose "Analyzing \"$file\"" 92
 
         # Retrieve the modified dates
         modifiedDateSynk=$(grep "^$file//" $SYNKFILE | awk -F '//' '{print $4}')
@@ -77,11 +81,13 @@ function synk {
         # If at least one is a directory
         elif [ -d $A/$file ] || [ -d $B/$file ]; then
 
-            # Use recursivity 
+            # Use recursivity
             synk $A/$file $B/$file
 
         # If file A does not exist but is in the synk file (then the file has been deleted)
         elif [ ! -e $A/$file ] && $(isInSynkFile $file); then
+
+            displayVerbose "Removing \"$B/$file\""
 
             # We delete it in B
             rm -f $B/$file
@@ -90,6 +96,8 @@ function synk {
 
         # If file B does not exist but is in the synk file (then the file has been deleted)
         elif [ ! -e $B/$file ] && $(isInSynkFile $file); then
+
+            displayVerbose "Removing \"$A/$file\""
 
             # We delete it in A
             rm -f $A/$file
@@ -105,20 +113,24 @@ function synk {
         # If file A has been modified or created
         elif ([ -f $A/$file ] && [ "$modifiedDateA" != "$modifiedDateSynk" ] && [ "$modifiedDateB" = "$modifiedDateSynk" ]) || ([ ! -e $B/$file ] && ! $(isInSynkFile $file)); then
 
+            displayVerbose "Copy \"$A/$file\" to \"$B/$file\""
+
             # Overwrite old file with the new file
             mkdir -p $2 2>/dev/null
             cp -f --preserve=all $A/$file $B/$file
-            
+
             # Update synk file with the new metadata
             updateSynkFile $A/$file $file
 
         # If file B has been modified or created
         elif ([ -f $B/$file ] && [ "$modifiedDateB" != "$modifiedDateSynk" ] && [ "$modifiedDateA" = "$modifiedDateSynk" ]) || ([ ! -e $B/$file ] && ! $(isInSynkFile $file)); then
-            
+
+            displayVerbose "Copy \"$B/$file\" to \"$A/$file\""
+
             # Overwrite old file with the new file
             mkdir -p $1 2>/dev/null
             cp -f --preserve=all $B/$file $A/$file
-            
+
             # Update synk file with the new metadata
             updateSynkFile $B/$file $file
 
@@ -128,12 +140,16 @@ function synk {
             # If only file A permission has changed
             if [ "$permissionA" != "$permissionSynk" ] && [ "$permissionB" = "$permissionSynk"  ]; then
 
+                displayVerbose "Copy file permission from \"$A/$file\" to \"$B/$file\""
+
                 # We copy file A permission to file B
-                chmod --reference="$B/$file" "$A/$file"
+                chmod --reference="$A/$file" "$B/$file"
 
             # If only file B permission has changed
             elif [ "$permissionA" = "$permissionSynk" ] && [ "$permissionB" != "$permissionSynk" ]; then
-                
+
+                displayVerbose "Copy file permission from \"$B/$file\" to \"$A/$file\""
+
                 # We copy file B permission to file A
                 chmod --reference="$B/$file" "$A/$file"
 
@@ -145,7 +161,7 @@ function synk {
                 echo -e "In $B\n\tPermissions: $(stat -c '%A' $B/$file)\n\tLast modified date: $(stat -c '%y' $B/$file)"
 
                 resolveConflict $file
-            
+
             fi
 
         # Otherwise it is a conflict
@@ -257,14 +273,37 @@ function resolveConflict {
     done
 }
 
-# Display a message M to stderr (optional) and exit
-# syntax : fatalError [M]
+# Display a message M to stderr (optional), indicate to use help if H = true and exit
+# syntax : fatalError [M] [H]
 function fatalError {
     if [ $# -ge 1 ]; then
-        echo $1 >&2
+        echo -e "$1" >&2
+        [ "$2" = "true" ] && echo -e "Try \"$0 --help\" for more information." >&2
     fi
 
     exit 1
+}
+
+# Display help message
+# syntax: displayHelp
+function displayHelp {
+    echo "Usage:"
+    echo "$0 [OPTION]... init DIRECTORY_A DIRECTORY_B [SYNK_PATH]"
+    echo -e "$0 [OPTION]... [SYNK_PATH]\n"
+    echo "Where OPTION can be:"
+    echo -e "\t-q, --quiet      show only minimal output"
+    echo -e "\t-h, --help       display this help and exit"
+    echo -e "\t--authors        display authors and exit"
+    return 0
+}
+
+# Display verbose message M. Color can be specified with parameter C
+# syntax: displayVerbose M [C]
+function displayVerbose {
+    [ "$VERBOSE" != "true" ] && return 1
+
+    [ "$2" = "" ] && echo -e "\e[94m$1\e[0m" || echo -e "\e[$2m$1\e[0m"
+    return 0
 }
 
 #####################################################
@@ -272,9 +311,9 @@ function fatalError {
 #####################################################
 
 # Get options
-VERBOSE=
+VERBOSE=true
 
-OPTS=$(getopt -o vh -l verbose,help -- "$@")
+OPTS=$(getopt -o qh -l quiet,help,authors -- "$@")
 if [ "$?" != 0 ]; then
     exit 1
 fi
@@ -282,13 +321,17 @@ eval set -- "$OPTS"
 
 while true; do
     case "$1" in
+    -q | --quiet)
+        VERBOSE=false
+        shift
+        ;;
     -h | --help)
-        echo "usage: synk [OPTION]... [init DIRECTORY_A DIRECTORY_B] [SYNK_PATH]"
+        displayHelp
         exit 0
         ;;
-    -v | --verbose)
-        VERBOSE=true
-        shift
+    --authors)
+        echo "Written by Marceau Vienne and Valentin Peltier."
+        exit 0
         ;;
     --) break ;;
     esac
@@ -307,7 +350,7 @@ case $# in
 0 | 1)
     # synk --> check if a synchronisation has been initiated
     if [ $# -eq 0 ] && [ ! $SYNKFILE ]; then
-        fatalError "Error: please initiate a synchronisation first or check $LAST_SYNKFILE"
+        fatalError "Error: please initiate a synchronisation first or check \"$LAST_SYNKFILE\"" true
     fi
 
     # synk S --> set the synk file path with the path given by the user
@@ -317,17 +360,17 @@ case $# in
 
     # Check if the synk file exists
     if [ ! -e $SYNKFILE ]; then
-        fatalError "Error: the synchronisation file does not exist at the specified path ($SYNKFILE)"
+        fatalError "Error: the synchronisation file does not exist at the specified path \"$SYNKFILE\""
     fi
 
     # Check if we can write to the synk file
     if [ ! -w $SYNKFILE ]; then
-        fatalError "Error: cannot write to $SYNKFILE: permission denied"
+        fatalError "Error: cannot write to \"$SYNKFILE\": permission denied."
     fi
 
     # Check if the synk file is a regular file
     if [ ! -f $SYNKFILE ]; then
-        fatalError "Error: you must specify a valid synchronisation file"
+        fatalError "Error: you must specify a valid synchronisation file." true
     fi
 
     # Get A and B paths from the synk file
@@ -337,7 +380,7 @@ case $# in
     # Synchronise directories A and B with the specified synk file
     synk $A $B
 
-    echo "Files synchronized successfully"
+    echo "Files synchronized successfully."
 
     # Update the last-synk file so that we can remember the last synk file used
     echo $SYNKFILE > $LAST_SYNKFILE
@@ -347,7 +390,7 @@ case $# in
 3 | 4)
     # Check that the first argument is "init"
     if [ $1 != "init" ]; then
-        fatalError "Error: unknown command \"$1\""
+        fatalError "Error: unknown command \"$1\"" true
     fi
 
     # If the user has given a path for the synk file, then we use it, else we use the default path
@@ -377,7 +420,7 @@ case $# in
     ;;
 
 *)
-    fatalError "Error: invalid arguments number"
+    fatalError "Error: invalid arguments number." true
     ;;
 esac
 
